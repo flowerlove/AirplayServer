@@ -15,6 +15,8 @@ typedef struct {
     int data_len;
     unsigned int nTimeStamp;
     uint64_t pts;
+    int src_width;
+    int src_height;
 } h264_decode_struct;
 
 typedef struct {
