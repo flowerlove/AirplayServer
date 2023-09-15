@@ -15,13 +15,14 @@ typedef struct {
     int data_len;
     unsigned int nTimeStamp;
     uint64_t pts;
-    int src_width;
-    int src_height;
 } h264_decode_struct;
 
 typedef struct {
     unsigned short *data;
     int data_len;
     unsigned int pts;
+    uint32_t sample_rate;
+    uint16_t channels;
+    uint16_t bits_per_sample;
 } pcm_data_struct;
 #endif //AIRPLAYSERVER_STREAM_H

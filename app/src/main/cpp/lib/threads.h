@@ -17,6 +17,7 @@
 
 #if defined(WIN32)
 #include <windows.h>
+#include <time.h>
 
 #define sleepms(x) Sleep(x)
 
@@ -28,11 +29,18 @@ typedef HANDLE thread_handle_t;
 #define THREAD_JOIN(handle) do { WaitForSingleObject(handle, INFINITE); CloseHandle(handle); } while(0)
 
 typedef HANDLE mutex_handle_t;
+typedef HANDLE cond_handle_t;
 
 #define MUTEX_CREATE(handle) handle = CreateMutex(NULL, FALSE, NULL)
 #define MUTEX_LOCK(handle) WaitForSingleObject(handle, INFINITE)
 #define MUTEX_UNLOCK(handle) ReleaseMutex(handle)
 #define MUTEX_DESTROY(handle) CloseHandle(handle)
+
+#define COND_CREATE(handle) handle = CreateEvent(NULL, FALSE, FALSE, NULL)
+#define COND_SIGNAL(handle) if (handle != NULL) { SetEvent(handle); }
+#define COND_DESTROY(handle) if (handle != NULL) { CloseHandle(handle); handle = NULL;}
+
+int pthread_cond_timedwait(cond_handle_t* __cond, mutex_handle_t* __mutex, const struct timespec* __timeout);
 
 #else /* Use pthread library */
 

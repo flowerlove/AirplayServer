@@ -225,8 +225,13 @@ raop_handler_options(raop_conn_t *conn,
 	http_response_add_header(response, "Public", "SETUP, RECORD, PAUSE, FLUSH, TEARDOWN, OPTIONS, GET_PARAMETER, SET_PARAMETER");
 }
 
-static int setup = 0;
-
+// SETUP rtsp://192.168.1.125/6265229603576367238 RTSP/1.0
+//Content-Length: 533
+//Content-Type: application/x-apple-binary-plist
+//CSeq: 6
+//DACP-ID: 915531CAB703EF08
+//Active-Remote: 2292691321
+//User-Agent: AirPlay/387.2
 static void
 raop_handler_setup(raop_conn_t *conn,
                    http_request_t *request, http_response_t *response,
@@ -270,56 +275,168 @@ raop_handler_setup(raop_conn_t *conn,
     plist_t root_node = NULL;
     plist_from_bin(data, datalen, &root_node);
     plist_t streams_note = plist_dict_get_item(root_node, "streams");
-    if (setup == 0) {
+	plist_t eiv_note = plist_dict_get_item(root_node, "eiv");
+
+	plist_t stream_note = plist_array_get_item(streams_note, 0);
+	plist_t stream_id_note = NULL;
+	plist_t audio_format_note = NULL;
+	if (stream_note) {
+		stream_id_note = plist_dict_get_item(stream_note, "streamConnectionID");
+		audio_format_note = plist_dict_get_item(stream_note, "audioFormat");
+	}
+
+	if (eiv_note) {
 		unsigned char aesiv[16];
 		unsigned char aeskey[16];
-        setup++;
         logger_log(conn->raop->logger, LOGGER_DEBUG, "SETUP 1");
-        // 第一次setup
+		/*
+<plist version="1.0">
+<dict>
+	<key>et</key>
+	<integer>32</integer>
+	<key>eiv</key>
+	<data>
+		Bp5tRB8BOW/MWVJSGzALLw==
+	</data>
+	<key>timingProtocol</key>
+	<string>NTP</string>
+	<key>sessionUUID</key>
+	<string>43C10532-7CBC-419E-9BB3-528F7D6F9AE0</string>
+	<key>osName</key>
+	<string>iPhone OS</string>
+	<key>osBuildVersion</key>
+	<string>16A404</string>
+	<key>sourceVersion</key>
+	<string>371.4.7</string>
+	<key>timingPort</key>
+	<integer>60373</integer>
+	<key>isScreenMirroringSession</key>
+	<true/>
+	<key>osVersion</key>
+	<string>12.0.1</string>
+	<key>ekey</key>
+	<data>
+		RlBMWQECAQAAAAA8AAAAALFuVD0C1qvRjZI5wtJY4v0AAAAQd5dKdzn2dNJ2ysNpS4VjnfmFHlRqEnXFqUeXzEtMDLIdF/5Y
+	</data>
+	<key>deviceID</key>
+	<string>DC:0C:5C:B7:D6:DA</string>
+	<key>model</key>
+	<string>iPhone9,1</string>
+	<key>name</key>
+	<string>xxx的 iPhone</string>
+	<key>macAddress</key>
+	<string>DC:0C:5C:B7:D6:D8</string>
+</dict>
+</plist>
+		*/
         plist_t eiv_note = plist_dict_get_item(root_node, "eiv");
         char* eiv= NULL;
         uint64_t eiv_len = 0;
         plist_get_data_val(eiv_note, &eiv, &eiv_len);
         memcpy(aesiv, eiv, 16);
         logger_log(conn->raop->logger, LOGGER_DEBUG, "eiv_len = %llu", eiv_len);
+
         plist_t ekey_note = plist_dict_get_item(root_node, "ekey");
         char* ekey= NULL;
         uint64_t ekey_len = 0;
         plist_get_data_val(ekey_note, &ekey, &ekey_len);
         logger_log(conn->raop->logger, LOGGER_DEBUG, "ekey_len = %llu", ekey_len);
+
         // 时间port
 		uint64_t timing_rport;
         plist_t time_note = plist_dict_get_item(root_node, "timingPort");
         plist_get_uint_val(time_note, &timing_rport);
 		logger_log(conn->raop->logger, LOGGER_DEBUG, "timing_rport = %llu", timing_rport);
+
         // ekey是72字节
         int ret = fairplay_decrypt(conn->fairplay, ekey, aeskey);
         logger_log(conn->raop->logger, LOGGER_DEBUG, "fairplay_decrypt ret = %d", ret);
 		unsigned char ecdh_secret[32];
         pairing_get_ecdh_secret_key(conn->pairing, ecdh_secret);
-        conn->raop_rtp = raop_rtp_init(conn->raop->logger, &conn->raop->callbacks, conn->remote, conn->remotelen, aeskey, aesiv, ecdh_secret, timing_rport);
-		conn->raop_rtp_mirror = raop_rtp_mirror_init(conn->raop->logger, &conn->raop->callbacks, conn->remote, conn->remotelen, aeskey, ecdh_secret, timing_rport);
-    } else if (setup == 1) {
+
+		// name
+		char* name = NULL;
+		plist_t name_node = plist_dict_get_item(root_node, "name");
+		plist_get_string_val(name_node, &name);
+
+		char* deviceId = NULL;
+		plist_t device_id_node = plist_dict_get_item(root_node, "deviceID");
+		plist_get_string_val(device_id_node, &deviceId);
+
+        conn->raop_rtp = raop_rtp_init(conn->raop->logger, &conn->raop->callbacks, conn->remote, conn->remotelen, 
+			name, deviceId,
+			aeskey, aesiv, ecdh_secret, timing_rport);
+		conn->raop_rtp_mirror = raop_rtp_mirror_init(conn->raop->logger, &conn->raop->callbacks, conn->remote, conn->remotelen, 
+			name, deviceId,
+			aeskey, ecdh_secret, timing_rport);
+		if (name != NULL) {
+			free(name); name = NULL;
+		}
+		if (deviceId != NULL) {
+			free(deviceId); deviceId = NULL;
+		}
+	}
+	else if (stream_id_note) {
 		unsigned short tport=0, dport=0;
-        setup++;
         logger_log(conn->raop->logger, LOGGER_DEBUG, "SETUP 2");
+		/*
+<plist version="1.0">
+<dict>
+	<key>streams</key>
+	<array>
+		<dict>
+			<key>type</key>
+			<integer>110</integer>
+			<key>timestampInfo</key>
+			<array>
+				<dict>
+					<key>name</key>
+					<string>SubSu</string>
+				</dict>
+				<dict>
+					<key>name</key>
+					<string>BePxT</string>
+				</dict>
+				<dict>
+					<key>name</key>
+					<string>AfPxT</string>
+				</dict>
+				<dict>
+					<key>name</key>
+					<string>BefEn</string>
+				</dict>
+				<dict>
+					<key>name</key>
+					<string>EmEnc</string>
+				</dict>
+			</array>
+			<key>streamConnectionID</key>
+			<integer>4964383553955644435</integer>
+		</dict>
+	</array>
+</dict>
+</plist>
+		*/
 		plist_t stream_note = plist_array_get_item(streams_note, 0);
 		plist_t type_note = plist_dict_get_item(stream_note, "type");
-        uint64_t type;
-        plist_get_uint_val(type_note, &type);
-        logger_log(conn->raop->logger, LOGGER_DEBUG, "type = %llu", type);
+		if (type_note != NULL) {
+			uint64_t type;
+			plist_get_uint_val(type_note, &type);
+			logger_log(conn->raop->logger, LOGGER_DEBUG, "type = %llu", type);
+		}
 		plist_t stream_id_note = plist_dict_get_item(stream_note, "streamConnectionID");
-		uint64_t streamConnectionID;
-		plist_get_uint_val(stream_id_note, &streamConnectionID);
-        logger_log(conn->raop->logger, LOGGER_DEBUG, "streamConnectionID = %llu", streamConnectionID);
-
+		uint64_t streamConnectionID = 0;
+		if (stream_id_note != NULL) {
+			plist_get_uint_val(stream_id_note, &streamConnectionID);
+			logger_log(conn->raop->logger, LOGGER_DEBUG, "streamConnectionID = %llu", streamConnectionID);
+		}
 
         if (conn->raop_rtp_mirror) {
 			raop_rtp_init_mirror_aes(conn->raop_rtp_mirror, streamConnectionID);
 			raop_rtp_start_mirror(conn->raop_rtp_mirror, use_udp, remote_tport, &tport, &dport);
             logger_log(conn->raop->logger, LOGGER_DEBUG, "RAOP initialized success");
         } else {
-            logger_log(conn->raop->logger, LOGGER_ERR, "RAOP not initialized at SETUP, playing will fail!");
+            logger_log(conn->raop->logger, LOGGER_ERR, "RAOP not initialized at SETUP, playing will fail! [Setup2: raop_rtp_mirror is NULL]");
             http_response_set_disconnect(response, 1);
         }
         plist_t r_node = plist_new_dict();
@@ -343,8 +460,15 @@ raop_handler_setup(raop_conn_t *conn,
         *response_data = malloc(len);
         memcpy(*response_data, rsp, len);
         *response_datalen = len;
-        logger_log(conn->raop->logger, LOGGER_INFO, "dport = %d, tport = %d", dport, tport);
-    } else {
+
+		plist_free(r_node);
+		r_node = NULL;
+		if (rsp != NULL) {
+			free(rsp);
+			rsp = NULL;
+		}
+		logger_log(conn->raop->logger, LOGGER_INFO, "dport = %d, tport = %d", dport, tport);
+    } else if (audio_format_note) {
         logger_log(conn->raop->logger, LOGGER_DEBUG, "SETUP 3");
         unsigned short cport = 0, tport = 0, dport = 0;
 
@@ -352,29 +476,29 @@ raop_handler_setup(raop_conn_t *conn,
             raop_rtp_start_audio(conn->raop_rtp, use_udp, remote_cport, remote_tport, &cport, &tport, &dport);
             logger_log(conn->raop->logger, LOGGER_DEBUG, "RAOP initialized success");
         } else {
-            logger_log(conn->raop->logger, LOGGER_ERR, "RAOP not initialized at SETUP, playing will fail!");
+            logger_log(conn->raop->logger, LOGGER_ERR, "RAOP not initialized at SETUP, playing will fail![Setup3: raop_rtp is NULL]");
             http_response_set_disconnect(response, 1);
         }
         // 需要返回端口
-		/**
-		 * <dict>
-	<key>streams</key>
-	<array>
-		<dict>
-			<key>dataPort</key>
-			<integer>42820</integer>
-			<key>controlPort</key>
-			<integer>46440</integer>
-			<key>type</key>
-			<integer>96</integer>
-		</dict>
-	</array>
-
-	<key>timingPort</key>
-	<integer>46440</integer>
-</dict>
-</plist>
-		 */
+//		/**
+//		 * <dict>
+//	<key>streams</key>
+//	<array>
+//		<dict>
+//			<key>dataPort</key>
+//			<integer>42820</integer>
+//			<key>controlPort</key>
+//			<integer>46440</integer>
+//			<key>type</key>
+//			<integer>96</integer>
+//		</dict>
+//	</array>
+//
+//	<key>timingPort</key>
+//	<integer>46440</integer>
+//</dict>
+//</plist>
+//		 */
 		plist_t r_node = plist_new_dict();
 		plist_t s_node = plist_new_array();
 		plist_t s_sub_node = plist_new_dict();
@@ -397,9 +521,24 @@ raop_handler_setup(raop_conn_t *conn,
 		memcpy(*response_data, rsp, len);
 		*response_datalen = len;
 
+		plist_free(r_node);
+		r_node = NULL;
+		if (rsp != NULL) {
+			free(rsp);
+			rsp = NULL;
+		}
 		logger_log(conn->raop->logger, LOGGER_INFO, "dport = %d, tport = %d, cport = %d", dport, tport, cport);
     }
+	else {
+		// unknown stream
+		logger_log(conn->raop->logger, LOGGER_WARNING, "Unknown stream");
+		http_response_add_header(response, "Content-Type", "application/x-apple-binary-plist");
+	}
 
+	if (root_node) {
+		plist_free(root_node);
+		root_node = NULL;
+	}
 }
 
 static void
@@ -509,4 +648,54 @@ raop_handler_record(raop_conn_t *conn,
     logger_log(conn->raop->logger, LOGGER_DEBUG, "raop_handler_record");
     http_response_add_header(response, "Audio-Latency", "11025");
     http_response_add_header(response, "Audio-Jack-Status", "connected; type=analog");
+}
+
+static void
+raop_handler_teardown(raop_conn_t* conn,
+	http_request_t* request, http_response_t* response,
+	char** response_data, int* response_datalen)
+{
+	const char* data;
+	int datalen;
+
+	data = http_request_get_data(request, &datalen);
+
+	plist_t root_node = NULL;
+	plist_from_bin(data, datalen, &root_node);
+	plist_t streams_note = plist_dict_get_item(root_node, "streams");
+
+	uint64_t type = 0;
+	if (streams_note) {
+		plist_t stream_note = plist_array_get_item(streams_note, 0);
+		if (stream_note) {
+			plist_t type_node = plist_dict_get_item(stream_note, "type");
+			plist_get_uint_val(type_node, &type);
+			logger_log(conn->raop->logger, LOGGER_DEBUG, "type = %llu", type);
+		}
+	}
+	if (type == 96) {
+		logger_log(conn->raop->logger, LOGGER_DEBUG, "teardown raop");
+		raop_rtp_stop(conn->raop_rtp);
+	}
+	else if (type == 110) {
+		logger_log(conn->raop->logger, LOGGER_DEBUG, "teardown mirror");
+		raop_rtp_mirror_stop(conn->raop_rtp_mirror);
+	}
+	else {
+		logger_log(conn->raop->logger, LOGGER_DEBUG, "teardown client");
+		if (conn->raop_rtp) {
+			/* Destroy our RTP session */
+			raop_rtp_destroy(conn->raop_rtp);
+			conn->raop_rtp = NULL;
+		}
+		if (conn->raop_rtp_mirror) {
+			/* Destroy our mirror session */
+			raop_rtp_mirror_destroy(conn->raop_rtp_mirror);
+			conn->raop_rtp_mirror = NULL;
+		}
+	}
+	logger_log(conn->raop->logger, LOGGER_DEBUG, "teardown end");
+
+	//http_response_add_header(*response, "Connection", "close");
+	plist_free(root_node);
 }

@@ -13,54 +13,62 @@
 
 static JavaVM* g_JavaVM;
 
-void OnRecvAudioData(void *observer, pcm_data_struct *data) {
+void OnRecvAudioData(void *observer, pcm_data_struct *data, const char* remoteDeviceName, const char* remoteDeviceId) {
     jobject obj = (jobject) observer;
     JNIEnv* jniEnv = NULL;
     g_JavaVM->AttachCurrentThread(&jniEnv, NULL);
     jclass cls = jniEnv->GetObjectClass(obj);
-    jmethodID onRecvAudioDataM = jniEnv->GetMethodID(cls, "onRecvAudioData", "([SJ)V");
+    jmethodID onRecvAudioDataM = jniEnv->GetMethodID(cls, "onRecvAudioData", "([SJLjava/lang/String;Ljava/lang/String;)V");
     jniEnv->DeleteLocalRef(cls);
     jshortArray sarr = jniEnv->NewShortArray(data->data_len);
     if (sarr == NULL) return;
     jniEnv->SetShortArrayRegion(sarr, (jint) 0, data->data_len, (jshort *) data->data);
-    jniEnv->CallVoidMethod(obj, onRecvAudioDataM, sarr, data->pts);
+
+    jstring deviceName = jniEnv->NewStringUTF(remoteDeviceName);
+    jstring deviceId = jniEnv->NewStringUTF(remoteDeviceId);
+
+    jniEnv->CallVoidMethod(obj, onRecvAudioDataM, sarr, data->pts,deviceName, deviceId);
     jniEnv->DeleteLocalRef(sarr);
     g_JavaVM->DetachCurrentThread();
 }
 
-
-void OnRecvVideoData(void *observer, h264_decode_struct *data) {
+void OnRecvVideoData(void *observer, h264_decode_struct *data, const char* remoteDeviceName, const char* remoteDeviceId) {
     jobject obj = (jobject) observer;
     JNIEnv* jniEnv = NULL;
     g_JavaVM->AttachCurrentThread(&jniEnv, NULL);
     jclass cls = jniEnv->GetObjectClass(obj);
-    jmethodID onRecvVideoDataM = jniEnv->GetMethodID(cls, "onRecvVideoData", "([BIJJII)V");
+    jmethodID onRecvVideoDataM = jniEnv->GetMethodID(cls, "onRecvVideoData", "([BIJJLjava/lang/String;Ljava/lang/String;)V");
     jniEnv->DeleteLocalRef(cls);
     jbyteArray barr = jniEnv->NewByteArray(data->data_len);
     if (barr == NULL) return;
     jniEnv->SetByteArrayRegion(barr, (jint) 0, data->data_len, (jbyte *) data->data);
+
+    jstring deviceName = jniEnv->NewStringUTF(remoteDeviceName);
+    jstring deviceId = jniEnv->NewStringUTF(remoteDeviceId);
+
     jniEnv->CallVoidMethod(obj, onRecvVideoDataM, barr, data->frame_type,
-                                         data->nTimeStamp, data->pts, data->src_width, data->src_height);
+                                         data->nTimeStamp, data->pts,
+                                         deviceName, deviceId);
     jniEnv->DeleteLocalRef(barr);
     g_JavaVM->DetachCurrentThread();
 }
 
 extern "C" void
-audio_process(void *cls, pcm_data_struct *data)
+audio_process(void *cls, pcm_data_struct *data, const char* remoteDeviceName, const char* remoteDeviceId)
 {
-    OnRecvAudioData(cls, data);
+    OnRecvAudioData(cls, data, remoteDeviceName, remoteDeviceId);
 }
 
 extern "C" void
-audio_set_volume(void *cls, void *opaque, float volume)
+audio_set_volume(void *cls, void *opaque, float volume, const char* remoteName, const char* remoteDeviceId)
 {
 
 }
 
 extern "C" void
-video_process(void *cls, h264_decode_struct *data)
+video_process(void *cls, h264_decode_struct *data, const char* remoteDeviceName, const char* remoteDeviceId)
 {
-    OnRecvVideoData(cls, data);
+    OnRecvVideoData(cls, data, remoteDeviceName, remoteDeviceId);
 }
 
 extern "C" void

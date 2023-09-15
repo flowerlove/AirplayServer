@@ -44,6 +44,8 @@ struct raop_rtp_mirror_s {
     /* Remote address as sockaddr */
     struct sockaddr_storage remote_saddr;
     socklen_t remote_saddr_len;
+	const char remoteName[128];
+	const char remoteDeviceId[128];
 
     /* MUTEX LOCKED VARIABLES START */
     /* These variables only edited mutex locked */
@@ -53,6 +55,8 @@ struct raop_rtp_mirror_s {
     int flush;
     thread_handle_t thread_mirror;
     thread_handle_t thread_time;
+    // For thread_mirror exit unexpeced.
+    thread_handle_t thread_exit_exception;
     mutex_handle_t run_mutex;
 
     mutex_handle_t time_mutex;
@@ -94,6 +98,7 @@ raop_rtp_parse_remote(raop_rtp_mirror_t *raop_rtp_mirror, const unsigned char *r
 
 #define NO_FLUSH (-42)
 raop_rtp_mirror_t *raop_rtp_mirror_init(logger_t *logger, raop_callbacks_t *callbacks, const unsigned char *remote, int remotelen,
+	                                    const char* remoteName, const char* remoteDeviceId,
                                         const unsigned char *aeskey, const unsigned char *ecdh_secret, unsigned short timing_rport)
 {
     raop_rtp_mirror_t *raop_rtp_mirror;
@@ -118,6 +123,15 @@ raop_rtp_mirror_t *raop_rtp_mirror_init(logger_t *logger, raop_callbacks_t *call
         free(raop_rtp_mirror);
         return NULL;
     }
+	memset(raop_rtp_mirror->remoteName, 0, 128);
+	memset(raop_rtp_mirror->remoteDeviceId, 0, 128);
+	if (remoteName != NULL) {
+		strncpy(raop_rtp_mirror->remoteName, remoteName, min(128, strlen(remoteName)));
+	}
+	if (remoteDeviceId != NULL) {
+		strncpy(raop_rtp_mirror->remoteDeviceId, remoteDeviceId, min(128, strlen(remoteDeviceId)));
+	}
+
     raop_rtp_mirror->running = 0;
     raop_rtp_mirror->joined = 1;
     raop_rtp_mirror->flush = NO_FLUSH;
@@ -166,6 +180,24 @@ raop_rtp_mirror_thread_time(void *arg)
         int sendlen = sendto(raop_rtp_mirror->mirror_time_sock, (char *)time, sizeof(time), 0, (struct sockaddr *) &raop_rtp_mirror->remote_saddr, raop_rtp_mirror->remote_saddr_len);
         logger_log(raop_rtp_mirror->logger, LOGGER_DEBUG, "raop_rtp_mirror_thread_time sendlen = %d", sendlen);
 
+        fd_set rfds;
+        struct timeval tv;
+        int nfds, ret;
+        /* Set timeout value to 5ms */
+        tv.tv_sec = 0;
+        tv.tv_usec = 5000;
+
+        /* Get the correct nfds value and set rfds */
+        FD_ZERO(&rfds);
+        FD_SET(raop_rtp_mirror->mirror_time_sock, &rfds);
+        nfds = raop_rtp_mirror->mirror_time_sock + 1;
+        ret = select(nfds, &rfds, NULL, NULL, &tv);
+        if (ret == 0) {
+            /* Timeout happened */
+            sleepms(1000);
+            continue;
+        }
+
         saddrlen = sizeof(saddr);
         packetlen = recvfrom(raop_rtp_mirror->mirror_time_sock, (char *)packet, sizeof(packet), 0,
                              (struct sockaddr *)&saddr, &saddrlen);
@@ -187,12 +219,16 @@ raop_rtp_mirror_thread_time(void *arg)
         } else {
             struct timeval now;
             struct timespec outtime;
+#ifndef WIN32
             MUTEX_LOCK(raop_rtp_mirror->time_mutex);
+#endif // !WIN32
             gettimeofday(&now, NULL);
             outtime.tv_sec = now.tv_sec + 3;
             outtime.tv_nsec = now.tv_usec * 1000;
             int ret = pthread_cond_timedwait(&raop_rtp_mirror->time_cond, &raop_rtp_mirror->time_mutex, &outtime);
+#ifndef WIN32
             MUTEX_UNLOCK(raop_rtp_mirror->time_mutex);
+#endif // !WIN32
             //sleepms(3000);
         }
     }
@@ -201,7 +237,17 @@ raop_rtp_mirror_thread_time(void *arg)
 }
 //#define DUMP_H264
 
+static THREAD_RETVAL
+raop_exception_thread(void* arg)
+{
+    raop_rtp_mirror_t* raop_rtp_mirror = arg;
+    raop_rtp_mirror_stop(raop_rtp_mirror);
+    return 0;
+}
+
 #define RAOP_PACKET_LEN 32768
+
+#define DUMP_H264 1
 /**
  * Mirror
  */
@@ -216,7 +262,14 @@ raop_rtp_mirror_thread(void *arg)
     uint64_t pts_base = 0;
     uint64_t pts = 0;
     assert(raop_rtp_mirror);
-    
+
+    int exceptionExit = 0;
+#ifdef DUMP_H264
+    FILE* file = fopen("demo.h264", "wb");
+    FILE* file_source = fopen("demo.source", "wb");
+
+    FILE* file_len = fopen("demo.len", "wb");
+#endif
     while (1) {
         fd_set rfds;
         struct timeval tv;
@@ -247,6 +300,7 @@ raop_rtp_mirror_thread(void *arg)
         } else if (ret == -1) {
             /* FIXME: Error happened */
             logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Error in select");
+            exceptionExit = 1;
             break;
         }
         if (stream_fd == -1 && FD_ISSET(raop_rtp_mirror->mirror_data_sock, &rfds)) {
@@ -259,6 +313,7 @@ raop_rtp_mirror_thread(void *arg)
             if (stream_fd == -1) {
                 /* FIXME: Error happened */
                 logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Error in accept %d %s", errno, strerror(errno));
+                exceptionExit = 1;
                 break;
             }
         }
@@ -268,10 +323,12 @@ raop_rtp_mirror_thread(void *arg)
             if (ret == 0) {
                 /* TCP socket closed */
                 logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "TCP socket closed");
+                exceptionExit = 1;
                 break;
             } else if (ret == -1) {
                 /* FIXME: Error happened */
                 logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Error in recv");
+                exceptionExit = 1;
                 break;
             }
             readstart += ret;
@@ -344,16 +401,7 @@ raop_rtp_mirror_thread(void *arg)
                     h264_data.data = payload;
                     h264_data.frame_type = 1;
                     h264_data.pts = pts;
-
-                    float mWidthSource = byteutils_get_float(packet, 40);
-                    float mHeightSource = byteutils_get_float(packet, 44);
-                    float mWidth = byteutils_get_float(packet, 56);
-                    float mHeight =byteutils_get_float(packet, 60);
-                    //logger_log(raop_rtp_mirror->logger, LOGGER_DEBUG, "YYTEST1 mWidthSource = %f mHeightSource = %f", mWidthSource, mHeightSource);
-                    h264_data.src_width = mWidth;
-                    h264_data.src_height = mHeight;
-
-                    raop_rtp_mirror->callbacks.video_process(raop_rtp_mirror->callbacks.cls, &h264_data);
+                    raop_rtp_mirror->callbacks.video_process(raop_rtp_mirror->callbacks.cls, &h264_data, raop_rtp_mirror->remoteName, raop_rtp_mirror->remoteDeviceId);
                     free(payload_in);
                     free(payload);
                 } else if ((payloadtype & 255) == 1) {
@@ -361,7 +409,7 @@ raop_rtp_mirror_thread(void *arg)
                     float mHeightSource = byteutils_get_float(packet, 44);
                     float mWidth = byteutils_get_float(packet, 56);
                     float mHeight =byteutils_get_float(packet, 60);
-                    //logger_log(raop_rtp_mirror->logger, LOGGER_DEBUG, "mWidthSource = %f mHeightSource = %f mWidth = %f mHeight = %f", mWidthSource, mHeightSource, mWidth, mHeight);
+                    logger_log(raop_rtp_mirror->logger, LOGGER_DEBUG, "mWidthSource = %f mHeightSource = %f mWidth = %f mHeight = %f", mWidthSource, mHeightSource, mWidth, mHeight);
                     /*int mRotateMode = 0;
 
                     int p = payloadtype >> 8;
@@ -374,7 +422,7 @@ raop_rtp_mirror_thread(void *arg)
                     }*/
 
                     // sps_pps This piece of data is not encrypted
-                    unsigned char payload[payloadsize];
+                    unsigned char* payload = malloc(payloadsize);
                     readstart = 0;
                     do {
                         // Payload data
@@ -400,7 +448,7 @@ raop_rtp_mirror_thread(void *arg)
                     if (h264.lengthofSPS + h264.lengthofPPS < 102400) {
                         // Copy spspps
                         int sps_pps_len = (h264.lengthofSPS + h264.lengthofPPS) + 8;
-                        unsigned char sps_pps[sps_pps_len];
+                        unsigned char* sps_pps = malloc(sps_pps_len);
                         sps_pps[0] = 0;
                         sps_pps[1] = 0;
                         sps_pps[2] = 0;
@@ -419,11 +467,10 @@ raop_rtp_mirror_thread(void *arg)
                         h264_data.data = sps_pps;
                         h264_data.frame_type = 0;
                         h264_data.pts = 0;
-                        h264_data.src_width = mWidth;
-                        h264_data.src_height = mHeight;
-                        //logger_log(raop_rtp_mirror->logger, LOGGER_DEBUG, "YYTEST2 mWidthSource = %f mHeightSource = %f", mWidthSource, mHeightSource);
-                        raop_rtp_mirror->callbacks.video_process(raop_rtp_mirror->callbacks.cls, &h264_data);
+                        raop_rtp_mirror->callbacks.video_process(raop_rtp_mirror->callbacks.cls, &h264_data, raop_rtp_mirror->remoteName, raop_rtp_mirror->remoteDeviceId);
+                        free(sps_pps);
                     }
+                    free(payload);
                     free(h264.picture_parameter_set);
                     free(h264.sequence);
                 } else if (payloadtype == (short) 2) {
@@ -434,6 +481,7 @@ raop_rtp_mirror_thread(void *arg)
                             ret = recv(stream_fd, payload_in + readstart, payloadsize - readstart, 0);
                             readstart = readstart + ret;
                         } while (readstart < payloadsize);
+						free(payload_in);
                     }
                 } else if (payloadtype == (short) 4) {
                     readstart = 0;
@@ -443,6 +491,7 @@ raop_rtp_mirror_thread(void *arg)
                             ret = recv(stream_fd, payload_in + readstart, payloadsize - readstart, 0);
                             readstart = readstart + ret;
                         } while (readstart < payloadsize);
+						free(payload_in);
                     }
                 } else {
                     readstart = 0;
@@ -452,6 +501,7 @@ raop_rtp_mirror_thread(void *arg)
                             ret = recv(stream_fd, payload_in + readstart, payloadsize - readstart, 0);
                             readstart = readstart + ret;
                         } while (readstart < payloadsize);
+                        free(payload_in);
                     }
                 }
             }
@@ -463,6 +513,15 @@ raop_rtp_mirror_thread(void *arg)
     /* Close the stream file descriptor */
     if (stream_fd != -1) {
         closesocket(stream_fd);
+    }
+    if (exceptionExit) {
+        if (raop_rtp_mirror->thread_exit_exception != NULL) {
+            logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Exiting exception thread[1]");
+            THREAD_JOIN(raop_rtp_mirror->thread_exit_exception);
+            raop_rtp_mirror->thread_exit_exception = NULL;
+            logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Exception thread exit[1]");
+        }
+        THREAD_CREATE(raop_rtp_mirror->thread_exit_exception, raop_exception_thread, raop_rtp_mirror);
     }
     logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Exiting TCP raop_rtp_mirror_thread thread");
 #ifdef DUMP_H264
@@ -504,6 +563,10 @@ raop_rtp_start_mirror(raop_rtp_mirror_t *raop_rtp_mirror, int use_udp, unsigned 
     raop_rtp_mirror->running = 1;
     raop_rtp_mirror->joined = 0;
 
+    if (raop_rtp_mirror->callbacks.connected != NULL) {
+        raop_rtp_mirror->callbacks.connected(raop_rtp_mirror->callbacks.cls, raop_rtp_mirror->remoteName, raop_rtp_mirror->remoteDeviceId);
+    }
+
     THREAD_CREATE(raop_rtp_mirror->thread_mirror, raop_rtp_mirror_thread, raop_rtp_mirror);
     THREAD_CREATE(raop_rtp_mirror->thread_time, raop_rtp_mirror_thread_time, raop_rtp_mirror);
     MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
@@ -511,32 +574,51 @@ raop_rtp_start_mirror(raop_rtp_mirror_t *raop_rtp_mirror, int use_udp, unsigned 
 
 void raop_rtp_mirror_stop(raop_rtp_mirror_t *raop_rtp_mirror) {
     assert(raop_rtp_mirror);
+    logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Stopping raop rtp mirror");
 
     /* Check that we are running and thread is not
      * joined (should never be while still running) */
     MUTEX_LOCK(raop_rtp_mirror->run_mutex);
     if (!raop_rtp_mirror->running || raop_rtp_mirror->joined) {
         MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
+        logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Raop rtp mirror stopped[1]");
         return;
     }
     raop_rtp_mirror->running = 0;
     MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
 
+    if (raop_rtp_mirror->mirror_data_sock != -1) {
+        closesocket(raop_rtp_mirror->mirror_data_sock);
+        raop_rtp_mirror->mirror_data_sock = -1;
+    }
+    if (raop_rtp_mirror->mirror_time_sock != -1) {
+        closesocket(raop_rtp_mirror->mirror_time_sock);
+        raop_rtp_mirror->mirror_time_sock = -1;
+    }
     /* Join the thread */
+    logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Join mirror thread");
     THREAD_JOIN(raop_rtp_mirror->thread_mirror);
 
+#ifndef WIN32
     MUTEX_LOCK(raop_rtp_mirror->time_mutex);
+#endif // !WIN32
     COND_SIGNAL(raop_rtp_mirror->time_cond);
+#ifndef WIN32
     MUTEX_UNLOCK(raop_rtp_mirror->time_mutex);
+#endif // !WIN32
 
+    logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Join mirror time thread");
     THREAD_JOIN(raop_rtp_mirror->thread_time);
-    if (raop_rtp_mirror->mirror_data_sock != -1) closesocket(raop_rtp_mirror->mirror_data_sock);
-    if (raop_rtp_mirror->mirror_time_sock != -1) closesocket(raop_rtp_mirror->mirror_time_sock);
 
     /* Mark thread as joined */
     MUTEX_LOCK(raop_rtp_mirror->run_mutex);
     raop_rtp_mirror->joined = 1;
     MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
+
+    if (raop_rtp_mirror->callbacks.disconnected != NULL) {
+        raop_rtp_mirror->callbacks.disconnected(raop_rtp_mirror->callbacks.cls, raop_rtp_mirror->remoteName, raop_rtp_mirror->remoteDeviceId);
+    }
+    logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Raop rtp mirror stopped");
 }
 
 void raop_rtp_mirror_destroy(raop_rtp_mirror_t *raop_rtp_mirror) {
@@ -546,6 +628,14 @@ void raop_rtp_mirror_destroy(raop_rtp_mirror_t *raop_rtp_mirror) {
         MUTEX_DESTROY(raop_rtp_mirror->time_mutex);
         COND_DESTROY(raop_rtp_mirror->time_cond);
         mirror_buffer_destroy(raop_rtp_mirror->buffer);
+        if (raop_rtp_mirror->thread_exit_exception) {
+            logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Exiting exception thread");
+            THREAD_JOIN(raop_rtp_mirror->thread_exit_exception);
+            raop_rtp_mirror->thread_exit_exception = NULL;
+            logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Exception thread exit");
+        }
+
+        free(raop_rtp_mirror);
     }
 }
 
@@ -575,6 +665,9 @@ raop_rtp_init_mirror_sockets(raop_rtp_mirror_t *raop_rtp_mirror, int use_ipv6)
     /* Set port values */
     raop_rtp_mirror->mirror_data_lport = dport;
     raop_rtp_mirror->mirror_timing_lport = tport;
+
+    logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Mirror data port: %d, timing port: ", dport, tport);
+
     return 0;
 
     sockets_cleanup:

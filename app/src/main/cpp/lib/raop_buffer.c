@@ -26,9 +26,14 @@
 #include "aes.h"
 #include "compat.h"
 #include "fdk-aac/libAACdec/include/aacdecoder_lib.h"
+#ifndef FIXP_SGL
+typedef SHORT FIXP_SGL;
+#endif // !FIXP_SGL
+
 #include "fdk-aac/libFDK/include/clz.h"
 #include "fdk-aac/libSYS/include/FDK_audio.h"
 #include "stream.h"
+
 
 #define RAOP_BUFFER_LENGTH 512
 
@@ -43,16 +48,17 @@ typedef struct {
 	unsigned int timestamp;
 	unsigned int ssrc;
 
-	/* 内存大小 */
+	uint32_t sample_rate;
+	uint16_t channels;
+	uint16_t bits_per_sample;
+
 	int audio_buffer_size;
-	/* 解码后长度 */
 	int audio_buffer_len;
 	void *audio_buffer;
 } raop_buffer_entry_t;
 
 struct raop_buffer_s {
     logger_t *logger;
-	/* 解密使用的key and IV */
 	unsigned char aeskey[RAOP_AESKEY_LEN];
 	unsigned char aesiv[RAOP_AESIV_LEN];
 
@@ -60,9 +66,7 @@ struct raop_buffer_s {
 
 	/* First and last seqnum */
 	int is_empty;
-	// 播放的序号
 	unsigned short first_seqnum;
-	// 收到的序号
 	unsigned short last_seqnum;
 
 	/* RTP buffer entries */
@@ -116,8 +120,6 @@ raop_buffer_init_key_iv(raop_buffer_t *raop_buffer,
                      const unsigned char *aesiv,
                      const unsigned char *ecdh_secret)
 {
-
-    // 初始化key
     unsigned char eaeskey[64];
     memcpy(eaeskey, aeskey, 16);
     sha512_context ctx;
@@ -272,7 +274,6 @@ raop_buffer_queue(raop_buffer_t *raop_buffer, unsigned char *data, unsigned shor
     }
     int payloadsize = datalen - 12;
 #ifdef DUMP_AUDIO
-    // 未解密的文件
     if (file_source != NULL) {
         fwrite(&data[12], payloadsize, 1, file_source);
     }
@@ -295,7 +296,6 @@ raop_buffer_queue(raop_buffer_t *raop_buffer, unsigned char *data, unsigned shor
     entry->flags = data[0];
     entry->type = data[1];
     entry->seqnum = seqnum;
-    // 第4个字节开始是pts
     entry->timestamp = (data[4] << 24) | (data[5] << 16) |
                        (data[6] << 8) | data[7];
     entry->ssrc = (data[8] << 24) | (data[9] << 16) |
@@ -303,21 +303,18 @@ raop_buffer_queue(raop_buffer_t *raop_buffer, unsigned char *data, unsigned shor
     entry->available = 1;
 
     encryptedlen = payloadsize/16*16;
-    unsigned char packetbuf[payloadsize];
+    unsigned char* packetbuf = malloc(payloadsize);
     memset(packetbuf, 0, payloadsize);
-	// 需要在内部初始化
     AES_CTX aes_ctx_audio;
 	AES_set_key(&aes_ctx_audio, raop_buffer->aeskey, raop_buffer->aesiv, AES_MODE_128);
 	AES_convert_key(&aes_ctx_audio);
     AES_cbc_decrypt(&aes_ctx_audio, &data[12], packetbuf, encryptedlen);
     memcpy(packetbuf+encryptedlen, &data[12+encryptedlen], payloadsize-encryptedlen);
 #ifdef DUMP_AUDIO
-    // 解密的文件
     if (file_aac != NULL) {
         fwrite(packetbuf, payloadsize, 1, file_aac);
     }
 #endif
-	// aac解码pcm
     int ret = 0;
     int pkt_size = payloadsize;
     UINT valid_size = payloadsize;
@@ -331,6 +328,15 @@ raop_buffer_queue(raop_buffer_t *raop_buffer, unsigned char *data, unsigned shor
 	if (ret != AAC_DEC_OK) {
 		logger_log(raop_buffer->logger, LOGGER_ERR, "aacDecoder_DecodeFrame error : 0x%x", ret);
 	}
+
+//	CStreamInfo* streamInfo = aacDecoder_GetStreamInfo(raop_buffer->phandle);
+//	if (streamInfo != NULL) {
+//		entry->sample_rate = streamInfo->sampleRate;
+//		entry->channels = streamInfo->numChannels;
+//		if (entry->channels != 0 && streamInfo->frameSize != 0) {
+//			entry->bits_per_sample = pcm_pkt_size * 8 / (streamInfo->frameSize * entry->channels);
+//		}
+//	}
 #ifdef DUMP_AUDIO
     if (file_pcm != NULL) {
         fwrite(entry->audio_buffer, entry->audio_buffer_len, 1, file_pcm);
@@ -346,12 +352,14 @@ raop_buffer_queue(raop_buffer_t *raop_buffer, unsigned char *data, unsigned shor
 	if (seqnum_cmp(seqnum, raop_buffer->last_seqnum) > 0) {
 		raop_buffer->last_seqnum = seqnum;
 	}
+	free(packetbuf);
 
     return 1;
 }
 
 const void *
-raop_buffer_dequeue(raop_buffer_t *raop_buffer, int *length, unsigned int* pts, int no_resend)
+raop_buffer_dequeue(raop_buffer_t *raop_buffer, int *length, unsigned int* pts, int no_resend,
+	uint32_t* sample_rate, uint16_t* channels, uint16_t* bits_per_sample)
 {
 	short buflen;
 	raop_buffer_entry_t *entry;
@@ -390,6 +398,10 @@ raop_buffer_dequeue(raop_buffer_t *raop_buffer, int *length, unsigned int* pts, 
 	/* Return entry audio buffer */
 	*length = entry->audio_buffer_len;
 	*pts = entry->timestamp;
+	*sample_rate = entry->sample_rate;
+	*channels = entry->channels;
+	*bits_per_sample = entry->bits_per_sample;
+
 	entry->audio_buffer_len = 0;
 	return entry->audio_buffer;
 }

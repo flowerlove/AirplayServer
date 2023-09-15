@@ -42,28 +42,17 @@ public class RaopServer implements SurfaceHolder.Callback {
         EventBus.getDefault().register(this);
     }
 
-    public void onRecvVideoData(byte[] nal, int nalType, long dts, long pts, int width, int height) {
+    public void onRecvVideoData(byte[] nal, int nalType, long dts, long pts, String deviceName, String deviceId) {
         NALPacket nalPacket = new NALPacket();
         nalPacket.nalData = nal;
         nalPacket.nalType = nalType;
-        nalPacket.pts = pts;
+        nalPacket.pts = dts;
 		nalPacket.dts = pts;
-        nalPacket.srcWidth = width;
-        nalPacket.srcHeight = height;
         mVideoPlayer.addPacker(nalPacket);
-        Log.d(TAG, "@@@@@@@@@@@@$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$onRecvVideoData width = " + width + ", height = " + height);
-        if(width <= 0 || height <= 0)
-            return;
-        //Log.d(TAG, "onRecvVideoData dts = " + dts + ", pts = " + pts + ", nalType = " + nalType + ", nal length = " + nal.length + "width=" + width + ", height =" + height);
-        if(mSurfaceWidth != width || mSurfaceHeight != height)
-        {
-            mSurfaceWidth = width;
-            mSurfaceHeight = height;
-            EventBus.getDefault().post(new SurfaceResizeEvent(mSurfaceWidth, mSurfaceHeight));
-        }
+        //Log.d(TAG, "@@@@@@@@@@@@$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$onRecvVideoData ByteLen" + nalPacket.nalData.length);
     }
 
-    public void onRecvAudioData(short[] pcm, long pts) {
+    public void onRecvAudioData(short[] pcm, long pts, String deviceName, String deviceId) {
         //Log.d(TAG, "onRecvAudioData pcm length = " + pcm.length + ", pts = " + pts);
         PCMPacket pcmPacket = new PCMPacket();
         pcmPacket.data = pcm;

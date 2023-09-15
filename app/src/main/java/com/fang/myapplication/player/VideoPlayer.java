@@ -9,7 +9,10 @@ import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 
+import com.fang.myapplication.SurfaceResizeEvent;
 import com.fang.myapplication.model.NALPacket;
+
+import org.greenrobot.eventbus.EventBus;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -87,7 +90,7 @@ public class VideoPlayer extends Thread {
 			videoFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);  //关键帧间隔时间 单位s
 			videoFormat.setInteger(MediaFormat.KEY_BIT_RATE, 2000000); // 比特率，根据需要设置
 			videoFormat.setInteger(MediaFormat.KEY_FRAME_RATE, 30); // 帧率，根据需要设置
-			videoFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL,  5); // 关键帧间隔，根据需要设置
+			videoFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL,  1); // 关键帧间隔，根据需要设置
 
 			mDecoder = MediaCodec.createDecoderByType(mMimeType);
 
@@ -228,8 +231,13 @@ public class VideoPlayer extends Thread {
 			MediaFormat changedOutputFormat = mDecoder.getOutputFormat();
 			int changedWidth = changedOutputFormat.getInteger(MediaFormat.KEY_WIDTH);
 			int changedHeight = changedOutputFormat.getInteger(MediaFormat.KEY_HEIGHT);
-
-			Log.d(TAG, "@@@dequeueOutputBuffer INFO_OUTPUT_FORMAT_CHANGED W:" + changedWidth + "-H:" + changedHeight);
+			if (mVideoCurWidth != changedWidth || mVideoCurHeight != changedHeight)
+			{
+				mVideoCurWidth = changedWidth;
+				mVideoCurHeight = changedHeight;
+				EventBus.getDefault().post(new SurfaceResizeEvent(changedWidth, changedHeight));
+				Log.d(TAG, "@@@dequeueOutputBuffer INFO_OUTPUT_FORMAT_CHANGED W:" + changedWidth + "-H:" + changedHeight);
+			}
 		} else {
 			//Log.d(TAG, "@@@dequeueOutputBuffer Else:" + outputBufferIndex);
 		}

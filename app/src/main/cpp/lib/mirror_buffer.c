@@ -20,7 +20,6 @@ struct mirror_buffer_s {
     int nextDecryptCount;
     uint8_t og[16];
     /* AES key and IV */
-    // 需要二次加工才能使用
     unsigned char aeskey[RAOP_AESKEY_LEN];
     unsigned char ecdh_secret[32];
 };
@@ -64,7 +63,6 @@ mirror_buffer_init_aes(mirror_buffer_t *mirror_buffer, uint64_t streamConnection
     fwrite(decrypt_aesiv, 16, 1, keyfile);
     fclose(keyfile);
 #endif
-    // 需要在外部初始化
     AES_init_ctx_iv(&mirror_buffer->aes_ctx, decrypt_aeskey, decrypt_aesiv);
     mirror_buffer->nextDecryptCount = 0;
 }
@@ -90,20 +88,15 @@ mirror_buffer_init(logger_t *logger,
 }
 
 void mirror_buffer_decrypt(mirror_buffer_t *mirror_buffer, unsigned char* input, unsigned char* output, int inputLen) {
-    // 开始解密
     if (mirror_buffer->nextDecryptCount > 0) {//mirror_buffer->nextDecryptCount = 10
         for (int i = 0; i < mirror_buffer->nextDecryptCount; i++) {
             output[i] = (input[i] ^ mirror_buffer->og[(16 - mirror_buffer->nextDecryptCount) + i]);
         }
     }
-    // 处理加密的字节
     int encryptlen = ((inputLen - mirror_buffer->nextDecryptCount) / 16) * 16;
-    // aes解密
     AES_CTR_xcrypt_buffer(&mirror_buffer->aes_ctx, input + mirror_buffer->nextDecryptCount, encryptlen);
-    // 复制到输出
     memcpy(output + mirror_buffer->nextDecryptCount, input + mirror_buffer->nextDecryptCount, encryptlen);
     int outputlength = mirror_buffer->nextDecryptCount + encryptlen;
-    //处理剩余长度
     int restlen = (inputLen - mirror_buffer->nextDecryptCount) % 16;
     int reststart = inputLen - restlen;
     mirror_buffer->nextDecryptCount = 0;
@@ -115,7 +108,7 @@ void mirror_buffer_decrypt(mirror_buffer_t *mirror_buffer, unsigned char* input,
             output[reststart + j] = mirror_buffer->og[j];
         }
         outputlength += restlen;
-        mirror_buffer->nextDecryptCount = 16 - restlen;// 差16-6=10个字节
+        mirror_buffer->nextDecryptCount = 16 - restlen;
     }
 }
 

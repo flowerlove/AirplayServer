@@ -5,6 +5,4 @@ public class NALPacket {
     public int nalType = 0;
     public long pts = 0;
     public long dts = 0;
-    public int srcWidth = 0;
-    public int srcHeight = 0;
 }

@@ -21,7 +21,7 @@ public class DNSNotify {
     private String mMacAddress;
 
     public DNSNotify() {
-        mMacAddress = NetUtils.getLocalMacAddress();
+        mMacAddress = NetUtils.getMac();
         mDeviceName = "t";
     }
 
@@ -41,11 +41,11 @@ public class DNSNotify {
         txtRecord.set("srcvers", "220.68");
         txtRecord.set("flags", "0x4");
         txtRecord.set("vv", "2");
-        txtRecord.set("model", "AppleTV2,1");
+        txtRecord.set("model", "AppleTV3,2");
         txtRecord.set("pw", "false");
         txtRecord.set("rhd", "5.6.0.0");
-        txtRecord.set("pk", "b07727d6f6cd6e08b58ede525ec3cdeaa252ad9f683feb212ef8a205246554e7");
-        txtRecord.set("pi", "2e388006-13ba-4041-9a67-25dd4a43d536");
+        //txtRecord.set("pk", "b07727d6f6cd6e08b58ede525ec3cdeaa252ad9f683feb212ef8a205246554e7");
+        //txtRecord.set("pi", "2e388006-13ba-4041-9a67-25dd4a43d536");
         this.mAirplayRegister = new Register(txtRecord, this.mDeviceName, "_airplay._tcp", "local.", "", port);
     }
 
@@ -53,24 +53,24 @@ public class DNSNotify {
         Log.d(TAG, "registerRaop port = " + port);
         TXTRecord txtRecord = new TXTRecord();
         txtRecord.set("ch", "2");
-        txtRecord.set("cn", "0,1,2,3");
+        txtRecord.set("cn", "0,1,3");
         txtRecord.set("da", "true");
         txtRecord.set("et", "0,3,5");
         txtRecord.set("vv", "2");
         txtRecord.set("ft", "0x5A7FFFF7,0x1E");
-        txtRecord.set("am", "AppleTV2,1");
+        txtRecord.set("am", "AppleTV3,2");
         txtRecord.set("md", "0,1,2");
         txtRecord.set("rhd", "5.6.0.0");
         txtRecord.set("pw", "false");
         txtRecord.set("sr", "44100");
         txtRecord.set("ss", "16");
         txtRecord.set("sv", "false");
-        txtRecord.set("tp", "UDP");
+        txtRecord.set("tp", "TCP,UDP");
         txtRecord.set("txtvers", "1");
         txtRecord.set("sf", "0x4");
         txtRecord.set("vs", "220.68");
-        txtRecord.set("vn", "65537");
-        txtRecord.set("pk", "b07727d6f6cd6e08b58ede525ec3cdeaa252ad9f683feb212ef8a205246554e7");
+        txtRecord.set("vn", "3");
+        //txtRecord.set("pk", "b07727d6f6cd6e08b58ede525ec3cdeaa252ad9f683feb212ef8a205246554e7");
         this.mRaopRegister = new Register(txtRecord, mMacAddress.replace(":", "") + "@" + this.mDeviceName, "_raop._tcp", "local.", "", port);
     }
 
