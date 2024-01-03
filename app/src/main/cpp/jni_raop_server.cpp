@@ -53,6 +53,55 @@ void OnRecvVideoData(void *observer, h264_decode_struct *data, const char* remot
     g_JavaVM->DetachCurrentThread();
 }
 
+void OnDeviceDisconnected(void *observer, const char* remoteDeviceName, const char* remoteDeviceId) {
+    jobject obj = (jobject) observer;
+    JNIEnv* jniEnv = NULL;
+    g_JavaVM->AttachCurrentThread(&jniEnv, NULL);
+    jclass cls = jniEnv->GetObjectClass(obj);
+    jmethodID onDeviceDisconnectedM = jniEnv->GetMethodID(cls, "onDeviceDisconnected", "(Ljava/lang/String;Ljava/lang/String;)V");
+    jniEnv->DeleteLocalRef(cls);
+
+    jstring deviceName = jniEnv->NewStringUTF(remoteDeviceName);
+    jstring deviceId = jniEnv->NewStringUTF(remoteDeviceId);
+
+    jniEnv->CallVoidMethod(obj, onDeviceDisconnectedM,
+                           deviceName, deviceId);
+
+    g_JavaVM->DetachCurrentThread();
+}
+
+void OnDeviceConnected(void *observer, const char* remoteDeviceName, const char* remoteDeviceId) {
+    jobject obj = (jobject) observer;
+    JNIEnv* jniEnv = NULL;
+    g_JavaVM->AttachCurrentThread(&jniEnv, NULL);
+    jclass cls = jniEnv->GetObjectClass(obj);
+    jmethodID onDeviceConnectedM = jniEnv->GetMethodID(cls, "onDeviceConnected", "(Ljava/lang/String;Ljava/lang/String;)V");
+    jniEnv->DeleteLocalRef(cls);
+
+    jstring deviceName = jniEnv->NewStringUTF(remoteDeviceName);
+    jstring deviceId = jniEnv->NewStringUTF(remoteDeviceId);
+
+    jniEnv->CallVoidMethod(obj, onDeviceConnectedM,
+                           deviceName, deviceId);
+
+    g_JavaVM->DetachCurrentThread();
+}
+
+void OnSetAudioVolume(void *observer, float volume, const char* remoteDeviceName, const char* remoteDeviceId) {
+    jobject obj = (jobject) observer;
+    JNIEnv* jniEnv = NULL;
+    g_JavaVM->AttachCurrentThread(&jniEnv, NULL);
+    jclass cls = jniEnv->GetObjectClass(obj);
+    jmethodID OnSetAudioVolumeM = jniEnv->GetMethodID(cls, "onSetAudioVolume", "([FLjava/lang/String;Ljava/lang/String;)V");
+    jniEnv->DeleteLocalRef(cls);
+
+    jstring deviceName = jniEnv->NewStringUTF(remoteDeviceName);
+    jstring deviceId = jniEnv->NewStringUTF(remoteDeviceId);
+
+    jniEnv->CallVoidMethod(obj, OnSetAudioVolumeM, volume, deviceName, deviceId);
+    g_JavaVM->DetachCurrentThread();
+}
+
 extern "C" void
 audio_process(void *cls, pcm_data_struct *data, const char* remoteDeviceName, const char* remoteDeviceId)
 {
@@ -69,6 +118,18 @@ extern "C" void
 video_process(void *cls, h264_decode_struct *data, const char* remoteDeviceName, const char* remoteDeviceId)
 {
     OnRecvVideoData(cls, data, remoteDeviceName, remoteDeviceId);
+}
+
+extern "C" void
+disconnected(void *cls, const char* remoteDeviceName, const char* remoteDeviceId)
+{
+    OnDeviceDisconnected(cls, remoteDeviceName, remoteDeviceId);
+}
+
+extern "C" void
+connected(void *cls, const char* remoteDeviceName, const char* remoteDeviceId)
+{
+    OnDeviceConnected(cls, remoteDeviceName, remoteDeviceId);
 }
 
 extern "C" void
@@ -102,7 +163,7 @@ JNI_OnLoad(JavaVM* vm, void* reserved) {
 }
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_fang_myapplication_RaopServer_start(JNIEnv* env, jobject object) {
+Java_com_fang_myapplication_RaopServer_start(JNIEnv* env, jobject object, jlong opaque) {
     raop_t *raop;
     raop_callbacks_t raop_cbs;
     memset(&raop_cbs, 0, sizeof(raop_cbs));
@@ -110,7 +171,9 @@ Java_com_fang_myapplication_RaopServer_start(JNIEnv* env, jobject object) {
     raop_cbs.audio_process = audio_process;
     raop_cbs.audio_set_volume = audio_set_volume;
     raop_cbs.video_process = video_process;
-    raop = raop_init(10, &raop_cbs);
+    raop_cbs.connected = connected;
+    raop_cbs.disconnected = disconnected;
+    raop = raop_init(opaque, &raop_cbs);
     if (raop == NULL) {
         LOGE("raop = NULL");
         return 0;

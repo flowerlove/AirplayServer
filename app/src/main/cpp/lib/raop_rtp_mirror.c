@@ -51,7 +51,9 @@ struct raop_rtp_mirror_s {
     /* These variables only edited mutex locked */
     int running;
     int joined;
-
+    int time_mutex_destroyed;
+    int run_mutex_destroyed;
+    int time_cond_destroyed;
     int flush;
     thread_handle_t thread_mirror;
     thread_handle_t thread_time;
@@ -165,12 +167,13 @@ raop_rtp_mirror_thread_time(void *arg)
     uint64_t base = now_us();
     uint64_t rec_pts = 0;
     while (1) {
-        MUTEX_LOCK(raop_rtp_mirror->run_mutex);
+        //MUTEX_LOCK(raop_rtp_mirror->run_mutex);
         if (!raop_rtp_mirror->running) {
-            MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
+            //MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
+            logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "raop_rtp_mirror_thread_time exit");
             break;
         }
-        MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
+        //MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
         uint64_t send_time = now_us() - base + rec_pts;
 
         byteutils_put_timeStamp(time, 40, send_time);
@@ -220,6 +223,7 @@ raop_rtp_mirror_thread_time(void *arg)
             struct timeval now;
             struct timespec outtime;
 #ifndef WIN32
+            logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "raop_rtp_mirror->time_mutex");
             MUTEX_LOCK(raop_rtp_mirror->time_mutex);
 #endif // !WIN32
             gettimeofday(&now, NULL);
@@ -241,13 +245,12 @@ static THREAD_RETVAL
 raop_exception_thread(void* arg)
 {
     raop_rtp_mirror_t* raop_rtp_mirror = arg;
-    raop_rtp_mirror_stop(raop_rtp_mirror);
+    //raop_rtp_mirror_stop(raop_rtp_mirror);
     return 0;
 }
 
 #define RAOP_PACKET_LEN 32768
 
-#define DUMP_H264 1
 /**
  * Mirror
  */
@@ -274,12 +277,13 @@ raop_rtp_mirror_thread(void *arg)
         fd_set rfds;
         struct timeval tv;
         int nfds, ret;
-        MUTEX_LOCK(raop_rtp_mirror->run_mutex);
+        //MUTEX_LOCK(raop_rtp_mirror->run_mutex);
         if (!raop_rtp_mirror->running) {
-            MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
+            //MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
+            logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "raop_rtp_mirror_thread exit");
             break;
         }
-        MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
+        //MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
         /* Set timeout value to 5ms */
         tv.tv_sec = 0;
         tv.tv_usec = 5000;
@@ -539,7 +543,7 @@ raop_rtp_start_mirror(raop_rtp_mirror_t *raop_rtp_mirror, int use_udp, unsigned 
     int use_ipv6 = 0;
 
     assert(raop_rtp_mirror);
-
+    logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "raop_rtp_mirror->run_mutex2");
     MUTEX_LOCK(raop_rtp_mirror->run_mutex);
     if (raop_rtp_mirror->running || !raop_rtp_mirror->joined) {
         MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
@@ -562,7 +566,9 @@ raop_rtp_start_mirror(raop_rtp_mirror_t *raop_rtp_mirror, int use_udp, unsigned 
     /* Create the thread and initialize running values */
     raop_rtp_mirror->running = 1;
     raop_rtp_mirror->joined = 0;
-
+    raop_rtp_mirror->run_mutex_destroyed = 0;
+    raop_rtp_mirror->time_mutex_destroyed = 0;
+    raop_rtp_mirror->time_cond_destroyed = 0;
     if (raop_rtp_mirror->callbacks.connected != NULL) {
         raop_rtp_mirror->callbacks.connected(raop_rtp_mirror->callbacks.cls, raop_rtp_mirror->remoteName, raop_rtp_mirror->remoteDeviceId);
     }
@@ -578,6 +584,7 @@ void raop_rtp_mirror_stop(raop_rtp_mirror_t *raop_rtp_mirror) {
 
     /* Check that we are running and thread is not
      * joined (should never be while still running) */
+    logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "raop_rtp_mirror->run_mutex1");
     MUTEX_LOCK(raop_rtp_mirror->run_mutex);
     if (!raop_rtp_mirror->running || raop_rtp_mirror->joined) {
         MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
@@ -600,20 +607,26 @@ void raop_rtp_mirror_stop(raop_rtp_mirror_t *raop_rtp_mirror) {
     THREAD_JOIN(raop_rtp_mirror->thread_mirror);
 
 #ifndef WIN32
-    MUTEX_LOCK(raop_rtp_mirror->time_mutex);
+    logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "raop_rtp_mirror->time_mutex1");
+    if(raop_rtp_mirror->time_mutex_destroyed == 0)
+        MUTEX_LOCK(raop_rtp_mirror->time_mutex);
 #endif // !WIN32
-    COND_SIGNAL(raop_rtp_mirror->time_cond);
+    if(raop_rtp_mirror->time_cond_destroyed == 0)
+        COND_SIGNAL(raop_rtp_mirror->time_cond);
 #ifndef WIN32
-    MUTEX_UNLOCK(raop_rtp_mirror->time_mutex);
+    if(raop_rtp_mirror->time_mutex_destroyed == 0)
+        MUTEX_UNLOCK(raop_rtp_mirror->time_mutex);
 #endif // !WIN32
-
     logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Join mirror time thread");
     THREAD_JOIN(raop_rtp_mirror->thread_time);
 
     /* Mark thread as joined */
-    MUTEX_LOCK(raop_rtp_mirror->run_mutex);
+    logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "raop_rtp_mirror->run_mutex");
+    if(raop_rtp_mirror->run_mutex_destroyed == 0)
+        MUTEX_LOCK(raop_rtp_mirror->run_mutex);
     raop_rtp_mirror->joined = 1;
-    MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
+    if(raop_rtp_mirror->run_mutex_destroyed == 0)
+        MUTEX_UNLOCK(raop_rtp_mirror->run_mutex);
 
     if (raop_rtp_mirror->callbacks.disconnected != NULL) {
         raop_rtp_mirror->callbacks.disconnected(raop_rtp_mirror->callbacks.cls, raop_rtp_mirror->remoteName, raop_rtp_mirror->remoteDeviceId);
@@ -624,10 +637,17 @@ void raop_rtp_mirror_stop(raop_rtp_mirror_t *raop_rtp_mirror) {
 void raop_rtp_mirror_destroy(raop_rtp_mirror_t *raop_rtp_mirror) {
     if (raop_rtp_mirror) {
         raop_rtp_mirror_stop(raop_rtp_mirror);
+        raop_rtp_mirror->run_mutex_destroyed = 1;
         MUTEX_DESTROY(raop_rtp_mirror->run_mutex);
+        logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "MUTEX1_DESTROY");
+        raop_rtp_mirror->time_mutex_destroyed = 1;
         MUTEX_DESTROY(raop_rtp_mirror->time_mutex);
+        logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "MUTEX2_DESTROY");
+        raop_rtp_mirror->time_cond_destroyed = 1;
         COND_DESTROY(raop_rtp_mirror->time_cond);
+        logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "COND_DESTROY");
         mirror_buffer_destroy(raop_rtp_mirror->buffer);
+
         if (raop_rtp_mirror->thread_exit_exception) {
             logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Exiting exception thread");
             THREAD_JOIN(raop_rtp_mirror->thread_exit_exception);

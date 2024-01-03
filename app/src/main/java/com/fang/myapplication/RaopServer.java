@@ -60,6 +60,18 @@ public class RaopServer implements SurfaceHolder.Callback {
         mAudioPlayer.addPacker(pcmPacket);
     }
 
+    public void onDeviceConnected(String deviceName, String deviceId) {
+        Log.d(TAG, "onDevice Connected deviceName:" + deviceName);
+    }
+
+    public void onDeviceDisconnected(String deviceName, String deviceId) {
+        Log.d(TAG, "onDevice DisConnected deviceName:" + deviceName);
+    }
+
+    public void onSetAudioVolume(float volume, String deviceName, String deviceId) {
+        Log.d(TAG, "onSetAudioVolume volume:" + volume);
+    }
+
     @Subscribe(threadMode = ThreadMode.MAIN,sticky = true)
     public void onSurfaceResizeEvent(SurfaceResizeEvent eventData) throws IOException {
         Log.d(TAG, "@@@@@@@@@@@@$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$onSurfaceResizeEvent width = " + eventData.Width + ", height = " + eventData.Height);
@@ -96,7 +108,7 @@ public class RaopServer implements SurfaceHolder.Callback {
 
     public void startServer() {
         if (mServerId == 0) {
-            mServerId = start();
+            mServerId = start(1);
         }
     }
 
@@ -115,7 +127,7 @@ public class RaopServer implements SurfaceHolder.Callback {
         return 0;
     }
 
-    private native long start();
+    private native long start(long maxClient);
     private native void stop(long serverId);
     private native int getPort(long serverId);
 }

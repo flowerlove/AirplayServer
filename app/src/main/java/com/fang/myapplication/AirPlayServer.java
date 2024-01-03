@@ -14,9 +14,7 @@ public class AirPlayServer {
     private ServerThread mServerThread = null;
 
     public AirPlayServer() {
-
     }
-
 
     public void startServer() {
         try {
@@ -32,6 +30,7 @@ public class AirPlayServer {
     public void stopServer() {
         try {
             Log.d(TAG, "stopping server");
+            int quickSortResult = 0;
             mServerSocket.close();
         } catch (IOException e) {
             e.printStackTrace();
