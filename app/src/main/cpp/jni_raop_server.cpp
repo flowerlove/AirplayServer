@@ -92,7 +92,7 @@ void OnSetAudioVolume(void *observer, float volume, const char* remoteDeviceName
     JNIEnv* jniEnv = NULL;
     g_JavaVM->AttachCurrentThread(&jniEnv, NULL);
     jclass cls = jniEnv->GetObjectClass(obj);
-    jmethodID OnSetAudioVolumeM = jniEnv->GetMethodID(cls, "onSetAudioVolume", "([FLjava/lang/String;Ljava/lang/String;)V");
+    jmethodID OnSetAudioVolumeM = jniEnv->GetMethodID(cls, "onSetAudioVolume", "(FLjava/lang/String;Ljava/lang/String;)V");
     jniEnv->DeleteLocalRef(cls);
 
     jstring deviceName = jniEnv->NewStringUTF(remoteDeviceName);
@@ -111,7 +111,7 @@ audio_process(void *cls, pcm_data_struct *data, const char* remoteDeviceName, co
 extern "C" void
 audio_set_volume(void *cls, void *opaque, float volume, const char* remoteName, const char* remoteDeviceId)
 {
-
+    OnSetAudioVolume(cls, volume, remoteName, remoteDeviceId);
 }
 
 extern "C" void
