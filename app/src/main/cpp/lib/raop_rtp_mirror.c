@@ -166,6 +166,7 @@ raop_rtp_mirror_thread_time(void *arg)
     unsigned char time[48]={35,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
     uint64_t base = now_us();
     uint64_t rec_pts = 0;
+    uint64_t recv_failed_timeout_num = 10;
     while (1) {
         //MUTEX_LOCK(raop_rtp_mirror->run_mutex);
         if (!raop_rtp_mirror->running) {
@@ -195,12 +196,20 @@ raop_rtp_mirror_thread_time(void *arg)
         FD_SET(raop_rtp_mirror->mirror_time_sock, &rfds);
         nfds = raop_rtp_mirror->mirror_time_sock + 1;
         ret = select(nfds, &rfds, NULL, NULL, &tv);
+        logger_log(raop_rtp_mirror->logger, LOGGER_DEBUG, "raop_rtp_mirror_thread_time ret = %d", ret);
         if (ret == 0) {
             /* Timeout happened */
+            recv_failed_timeout_num--;
             sleepms(1000);
-            continue;
+            logger_log(raop_rtp_mirror->logger, LOGGER_DEBUG, "UDP raop_rtp_mirror_thread_time recv_failed_timeout_num = %d", recv_failed_timeout_num);
+            if(recv_failed_timeout_num > 0)
+                continue;
+            else
+            {
+                break;
+            }
         }
-
+        recv_failed_timeout_num = 10;
         saddrlen = sizeof(saddr);
         packetlen = recvfrom(raop_rtp_mirror->mirror_time_sock, (char *)packet, sizeof(packet), 0,
                              (struct sockaddr *)&saddr, &saddrlen);
@@ -245,7 +254,7 @@ static THREAD_RETVAL
 raop_exception_thread(void* arg)
 {
     raop_rtp_mirror_t* raop_rtp_mirror = arg;
-    //raop_rtp_mirror_stop(raop_rtp_mirror);
+    raop_rtp_mirror_stop(raop_rtp_mirror);
     return 0;
 }
 
@@ -267,6 +276,7 @@ raop_rtp_mirror_thread(void *arg)
     assert(raop_rtp_mirror);
 
     int exceptionExit = 0;
+    int recv_failed_timeout_num = 1000;
 #ifdef DUMP_H264
     FILE* file = fopen("demo.h264", "wb");
     FILE* file_source = fopen("demo.source", "wb");
@@ -300,13 +310,23 @@ raop_rtp_mirror_thread(void *arg)
         ret = select(nfds, &rfds, NULL, NULL, &tv);
         if (ret == 0) {
             /* Timeout happened */
-            continue;
+            recv_failed_timeout_num--;
+            logger_log(raop_rtp_mirror->logger, LOGGER_DEBUG, "TCP raop_rtp_mirror_thread recv_failed_timeout_num = %d", recv_failed_timeout_num);
+            if(recv_failed_timeout_num > 0)
+                continue;
+            else
+            {
+                logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~Error in select");
+                exceptionExit = 1;
+                break;
+            }
         } else if (ret == -1) {
             /* FIXME: Error happened */
-            logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "Error in select");
+            logger_log(raop_rtp_mirror->logger, LOGGER_INFO, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~Error in select");
             exceptionExit = 1;
             break;
         }
+        recv_failed_timeout_num = 1000;
         if (stream_fd == -1 && FD_ISSET(raop_rtp_mirror->mirror_data_sock, &rfds)) {
             struct sockaddr_storage saddr;
             socklen_t saddrlen;
