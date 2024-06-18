@@ -311,7 +311,6 @@ raop_rtp_mirror_thread(void *arg)
         if (ret == 0) {
             /* Timeout happened */
             recv_failed_timeout_num--;
-            logger_log(raop_rtp_mirror->logger, LOGGER_DEBUG, "TCP raop_rtp_mirror_thread recv_failed_timeout_num = %d", recv_failed_timeout_num);
             if(recv_failed_timeout_num > 0)
                 continue;
             else

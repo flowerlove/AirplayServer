@@ -110,13 +110,13 @@ httpd_add_connection(httpd_t *httpd, int fd, unsigned char *local, int local_len
 	}
 	if (i == httpd->max_connections) {
 		/* This code should never be reached, we do not select server_fds when full */
-		logger_log(httpd->logger, LOGGER_INFO, "Max connections reached");
+		logger_log(httpd->logger, LOGGER_INFO, "HTPPPP Max connections reached");
 		return -1;
 	}
 
 	user_data = httpd->callbacks.conn_init(httpd->callbacks.opaque, local, local_len, remote, remote_len);
 	if (!user_data) {
-		logger_log(httpd->logger, LOGGER_ERR, "Error initializing HTTP request handler");
+		logger_log(httpd->logger, LOGGER_ERR, "HTPPPP Error initializing HTTP request handler");
 		return -1;
 	}
 
@@ -153,7 +153,7 @@ httpd_accept_connection(httpd_t *httpd, int server_fd, int is_ipv6)
 		return 0;
 	}
 
-	logger_log(httpd->logger, LOGGER_INFO, "Accepted %s client on socket %d",
+	logger_log(httpd->logger, LOGGER_INFO, "HTPPPP Accepted %s client on socket %d",
 	           (is_ipv6 ? "IPv6"  : "IPv4"), fd);
 	local = netutils_get_address(&local_saddr, &local_len);
 	remote = netutils_get_address(&remote_saddr, &remote_len);
@@ -189,7 +189,7 @@ httpd_thread(void *arg)
 	int i;
 
 	assert(httpd);
-
+	uint64_t recv_failed_timeout_num = 10;
 	while (1) {
 		fd_set rfds;
 		struct timeval tv;
@@ -241,10 +241,9 @@ httpd_thread(void *arg)
 			continue;
 		} else if (ret == -1) {
 			/* FIXME: Error happened */
-			logger_log(httpd->logger, LOGGER_INFO, "Error in select");
+			logger_log(httpd->logger, LOGGER_INFO, "HTPPPP Error in select");
 			break;
 		}
-
 		if (httpd->open_connections < httpd->max_connections &&
 		    httpd->server_fd4 != -1 && FD_ISSET(httpd->server_fd4, &rfds)) {
 			ret = httpd_accept_connection(httpd, httpd->server_fd4, 0);
@@ -265,32 +264,53 @@ httpd_thread(void *arg)
 		}
 		for (i=0; i<httpd->max_connections; i++) {
 			http_connection_t *connection = &httpd->connections[i];
-
+			logger_log(httpd->logger, LOGGER_INFO, "HTPPPP1 Error in select:%d", connection->connected);
 			if (!connection->connected) {
 				continue;
 			}
 			if (!FD_ISSET(connection->socket_fd, &rfds)) {
-				continue;
+				logger_log(httpd->logger, LOGGER_INFO, "HTPPPP2 Error in select:%d", connection->connected);
+				recv_failed_timeout_num--;
+				sleepms(1000);
+				logger_log(httpd->logger, LOGGER_DEBUG, "HTTPPPPPPPPPPPPPPP recv_failed_timeout_num = %d", recv_failed_timeout_num);
+				if(recv_failed_timeout_num > 0)
+					continue;
+				else
+				{
+					httpd_remove_connection(httpd, connection);
+					continue;
+				}
+			}
+			else
+			{
+				recv_failed_timeout_num = 10;
+				logger_log(httpd->logger, LOGGER_INFO, "HTPPPP3 Error in select:%d", connection->connected);
 			}
 
 			/* If not in the middle of request, allocate one */
 			if (!connection->request) {
+				logger_log(httpd->logger, LOGGER_INFO, "HTPPPP4 Error in select:%d", connection->connected);
 				connection->request = http_request_init();
 				assert(connection->request);
 			}
 
-			logger_log(httpd->logger, LOGGER_DEBUG, "Receiving on socket %d", connection->socket_fd);
+			logger_log(httpd->logger, LOGGER_DEBUG, "HTPPPP Receiving on socket %d", connection->socket_fd);
 			ret = recv(connection->socket_fd, buffer, sizeof(buffer), 0);
 			if (ret == 0) {
-				logger_log(httpd->logger, LOGGER_INFO, "Connection closed for socket %d", connection->socket_fd);
+				logger_log(httpd->logger, LOGGER_INFO, "HTPPPP5 Error in select:%d", connection->connected);
+				logger_log(httpd->logger, LOGGER_DEBUG, "HTPPPP Connection closed for socket %d", connection->socket_fd);
 				httpd_remove_connection(httpd, connection);
 				continue;
+			}
+			else
+			{
+				logger_log(httpd->logger, LOGGER_INFO, "HTPPPP6 Error in select:%d", connection->connected);
 			}
 
 			/* Parse HTTP request from data read from connection */
 			http_request_add_data(connection->request, buffer, ret);
 			if (http_request_has_error(connection->request)) {
-				logger_log(httpd->logger, LOGGER_INFO, "Error in parsing: %s", http_request_get_error_name(connection->request));
+				logger_log(httpd->logger, LOGGER_DEBUG, "HTTPPPPPPP Error in parsing: %s", http_request_get_error_name(connection->request));
 				httpd_remove_connection(httpd, connection);
 				continue;
 			}
@@ -317,22 +337,22 @@ httpd_thread(void *arg)
 						ret = send(connection->socket_fd, data+written, datalen-written, 0);
 						if (ret == -1) {
 							/* FIXME: Error happened */
-							logger_log(httpd->logger, LOGGER_INFO, "Error in sending data");
+							logger_log(httpd->logger, LOGGER_INFO, "HTPPPP Error in sending data");
 							break;
 						}
 						written += ret;
 					}
 
 					if (http_response_get_disconnect(response)) {
-						logger_log(httpd->logger, LOGGER_INFO, "Disconnecting on software request");
+						logger_log(httpd->logger, LOGGER_INFO, "HTPPPP Disconnecting on software request");
 						httpd_remove_connection(httpd, connection);
 					}
 				} else {
-					logger_log(httpd->logger, LOGGER_INFO, "Didn't get response");
+					logger_log(httpd->logger, LOGGER_INFO, "HTPPPP Didn't get response");
 				}
 				http_response_destroy(response);
 			} else {
-				logger_log(httpd->logger, LOGGER_DEBUG, "Request not complete, waiting for more data...");
+				logger_log(httpd->logger, LOGGER_DEBUG, "HTPPPP Request not complete, waiting for more data...");
 			}
 		}
 	}
@@ -344,7 +364,7 @@ httpd_thread(void *arg)
 		if (!connection->connected) {
 			continue;
 		}
-		logger_log(httpd->logger, LOGGER_INFO, "Removing connection for socket %d", connection->socket_fd);
+		logger_log(httpd->logger, LOGGER_INFO, "HTPPPP Removing connection for socket %d", connection->socket_fd);
 		httpd_remove_connection(httpd, connection);
 	}
 
@@ -360,7 +380,7 @@ httpd_thread(void *arg)
 		httpd->server_fd6 = -1;
 	}
 
-	logger_log(httpd->logger, LOGGER_INFO, "Exiting HTTP thread: %d", httpd->thread);
+	logger_log(httpd->logger, LOGGER_INFO, "HTPPPP Exiting HTTP thread: %d", httpd->thread);
 
 	return 0;
 }
@@ -382,7 +402,7 @@ httpd_start(httpd_t *httpd, unsigned short *port)
 
 	httpd->server_fd4 = netutils_init_socket(port, 0, 0);
 	if (httpd->server_fd4 == -1) {
-		logger_log(httpd->logger, LOGGER_ERR, "Error initialising socket %d", SOCKET_GET_ERROR());
+		logger_log(httpd->logger, LOGGER_ERR, "HTPPPP Error initialising socket %d", SOCKET_GET_ERROR());
 		MUTEX_UNLOCK(httpd->run_mutex);
 		return -1;
 	}
@@ -393,20 +413,20 @@ httpd_start(httpd_t *httpd, unsigned short *port)
 	}*/
 
 	if (httpd->server_fd4 != -1 && listen(httpd->server_fd4, backlog) == -1) {
-		logger_log(httpd->logger, LOGGER_ERR, "Error listening to IPv4 socket");
+		logger_log(httpd->logger, LOGGER_ERR, "HTPPPP Error listening to IPv4 socket");
 		closesocket(httpd->server_fd4);
 		closesocket(httpd->server_fd6);
 		MUTEX_UNLOCK(httpd->run_mutex);
 		return -2;
 	}
 	if (httpd->server_fd6 != -1 && listen(httpd->server_fd6, backlog) == -1) {
-		logger_log(httpd->logger, LOGGER_ERR, "Error listening to IPv6 socket");
+		logger_log(httpd->logger, LOGGER_ERR, "HTPPPP Error listening to IPv6 socket");
 		closesocket(httpd->server_fd4);
 		closesocket(httpd->server_fd6);
 		MUTEX_UNLOCK(httpd->run_mutex);
 		return -2;
 	}
-	logger_log(httpd->logger, LOGGER_INFO, "Initialized server socket(s)");
+	logger_log(httpd->logger, LOGGER_INFO, "HTPPPP Initialized server socket(s)");
 
 	/* Set values correctly and create new thread */
 	httpd->running = 1;
@@ -441,7 +461,7 @@ httpd_stop(httpd_t *httpd)
 		MUTEX_UNLOCK(httpd->run_mutex);
 		return;
 	}
-	logger_log(httpd->logger, LOGGER_INFO, "Stopping server socket..., %d", httpd->thread);
+	logger_log(httpd->logger, LOGGER_INFO, "HTPPPP Stopping server socket..., %d", httpd->thread);
 	httpd->running = 0;
 
 	if (httpd->server_fd4 != -1) {
@@ -458,11 +478,11 @@ httpd_stop(httpd_t *httpd)
 
 	THREAD_JOIN(httpd->thread);
 
-	logger_log(httpd->logger, LOGGER_INFO, "Stopping server socket[joined]...");
+	logger_log(httpd->logger, LOGGER_INFO, "HTPPPP Stopping server socket[joined]...");
 	MUTEX_LOCK(httpd->run_mutex);
 	httpd->joined = 1;
 	MUTEX_UNLOCK(httpd->run_mutex);
 
-	logger_log(httpd->logger, LOGGER_INFO, "Server socket stopped");
+	logger_log(httpd->logger, LOGGER_INFO, "HTPPPP Server socket stopped");
 }
 
